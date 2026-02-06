@@ -33,6 +33,9 @@ dependencies = [
     "pydicom>=2.3.0",
     "numpy>=1.21.0",
     "pandas>=1.3.0",
+    "itkwasm-dicom>=7.6.4",
+    "itk>=5.4.5",
+    "nibabel>=5.2.1",
 ]
 
 [project.optional-dependencies]

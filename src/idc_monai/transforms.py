@@ -201,21 +201,17 @@ class LoadDicomSegd(MapTransform):
             raise FileNotFoundError(f"No .dcm files found in {path}")
         return dcm_files[0]
 
-    def _build_affine(self, img) -> np.ndarray:
-        """Build 4x4 affine matrix from itkwasm Image metadata.
+    def _build_affine(self, spacing, origin, direction) -> np.ndarray:
+        """Build 4x4 affine matrix from spatial metadata.
 
-        The affine matrix transforms from voxel indices to physical (world)
-        coordinates. ITKWasm provides spacing, origin, and direction cosines
-        that fully describe the spatial mapping.
+        Args:
+            spacing: Voxel spacing in each dimension
+            origin: Physical coordinates of the first voxel
+            direction: 3x3 direction cosine matrix
 
-        Note: ITKWasm uses (i, j, k) indexing where the direction matrix
-        columns correspond to each axis. We build the affine to match the
-        array layout as returned by ITKWasm.
+        Returns:
+            4x4 affine transformation matrix
         """
-        spacing = np.array(img.spacing)
-        origin = np.array(img.origin)
-        direction = np.array(img.direction).reshape(3, 3)
-
         affine = np.eye(4)
         affine[:3, :3] = direction @ np.diag(spacing)
         affine[:3, 3] = origin
@@ -230,13 +226,16 @@ class LoadDicomSegd(MapTransform):
             # Read using ITKWasm
             seg_image, overlay_info = itkwasm_dicom.read_segmentation(dcm_file)
 
-            # Convert itkwasm.Image to numpy array
-            # Keep native ITKWasm layout - the affine matrix encodes orientation
-            # Use Orientationd transform to reorient if needed
+            # ITKWasm returns array in (Z, Y, X) order but metadata in (X, Y, Z) order
+            # Transpose array to (X, Y, Z) to match metadata and ITKReader convention
             seg_array = np.asarray(seg_image.data)
+            seg_array = np.transpose(seg_array, (2, 1, 0))  # (Z, Y, X) -> (X, Y, Z)
 
-            # Build affine from ITKWasm spatial metadata
-            affine = self._build_affine(seg_image)
+            # Build affine from ITKWasm spatial metadata (already in X, Y, Z order)
+            spacing = np.array(seg_image.spacing)
+            origin = np.array(seg_image.origin)
+            direction = np.array(seg_image.direction).reshape(3, 3)
+            affine = self._build_affine(spacing, origin, direction)
 
             # Create MONAI MetaTensor with metadata
             meta_tensor = MetaTensor(seg_array)

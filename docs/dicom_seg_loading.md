@@ -175,9 +175,29 @@ transforms = Compose([
 ### Key Features
 
 1. **Directory handling**: Accepts either a directory path (finds `.dcm` file inside) or direct file path
-2. **Affine construction**: Builds proper 4x4 affine matrix from ITKWasm Image metadata
-3. **MetaTensor output**: Returns MONAI `MetaTensor` with affine and metadata attached
-4. **Overlay info**: Preserves segment labels/descriptions in metadata
+2. **Array transposition**: ITKWasm returns arrays in (Z, Y, X) order but metadata in (X, Y, Z) order. We transpose to (X, Y, Z) to match ITKReader and MONAI conventions.
+3. **Affine construction**: Builds proper 4x4 affine matrix from ITKWasm Image metadata (spacing, origin, direction cosines)
+4. **MetaTensor output**: Returns MONAI `MetaTensor` with affine and metadata attached
+5. **Overlay info**: Preserves segment labels/descriptions in metadata
+
+### Important: Orientation Handling
+
+The CT image and DICOM-SEG may have different orientations (e.g., CT in LPS, SEG in RPI). This is normal - they represent the same physical space but with different array orderings.
+
+**Always use `Orientationd` to reorient both to a common orientation before processing:**
+
+```python
+from monai.transforms import Compose, LoadImaged, Orientationd, EnsureChannelFirstd
+from idc_monai.transforms import LoadDicomSegd
+
+transforms = Compose([
+    LoadImaged(keys=["image"]),
+    LoadDicomSegd(keys=["label"]),
+    EnsureChannelFirstd(keys=["image", "label"]),
+    Orientationd(keys=["image", "label"], axcodes="RAS"),  # Reorient both to RAS
+    # ... rest of pipeline
+])
+```
 
 ## Alternative: Using highdicom
 
