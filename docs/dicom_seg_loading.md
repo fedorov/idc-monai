@@ -223,6 +223,73 @@ transforms = Compose([
 ])
 ```
 
+## Technical Details: The Alignment Problem
+
+### The Challenge
+
+DICOM-SEG files often have different `ImageOrientationPatient` values than their source CT:
+
+| Attribute | CT | DICOM-SEG |
+|-----------|-----|-----------|
+| ImageOrientationPatient | `[1, 0, 0, 0, 1, 0]` | `[1, 0, 0, 0, -1, 0]` |
+| Direction matrix | `[[1,0,0], [0,1,0], [0,0,1]]` | `[[1,0,0], [0,-1,0], [0,0,-1]]` |
+| Y direction | +1 (increases with voxel) | -1 (decreases with voxel) |
+| Z direction | +1 (or -1) | -1 (typically) |
+
+This means the CT and SEG cover the same physical space but with different array orderings.
+
+### What MONAI's ITKReader Does
+
+ITKReader applies a coordinate transformation that produces a consistent affine format:
+- **Affine diagonal**: `[-spacing_x, -spacing_y, +spacing_z]`
+- **Origin**: Adjusted to the "far corner" for X and Y axes
+
+This is effectively a partial LPS-to-RAS-like transformation that negates X and Y coordinates.
+
+### What LoadDicomSegd Does
+
+To match ITKReader's output, `LoadDicomSegd` applies the following transformation:
+
+1. **Transpose array**: ITKWasm returns `(Z, Y, X)` order → transpose to `(X, Y, Z)`
+
+2. **Flip Y axis** (if direction[1,1] < 0):
+   - Flip the array along Y
+   - Adjust origin Y to the far corner, then negate
+
+3. **Flip Z axis** (if direction[2,2] < 0):
+   - Flip the array along Z
+   - Adjust origin Z to the far corner
+
+4. **Negate X and Y origins**: To match ITKReader's coordinate convention
+
+5. **Build affine**: With diagonal `[-spacing_x, -spacing_y, +spacing_z]`
+
+### Verification
+
+The transformation was verified by:
+1. Comparing dcmqi CLI output (NRRD format) with ITKWasm - they produce identical results
+2. Comparing ITK direct loading with MONAI ITKReader - ITKReader applies additional transformation
+3. Testing voxel-to-world coordinate mapping between CT and SEG
+4. Visual overlay verification showing anatomical alignment
+
+### Example: Coordinate Mapping
+
+For a test case with TotalSegmentator segmentation:
+
+```
+CT affine:
+[[-0.703125,  0,        0,        179.648]
+ [ 0,        -0.703125, 0,        340.648]
+ [ 0,         0,        5,       -328.000]]
+
+SEG affine (after LoadDicomSegd):
+[[-0.703125,  0,        0,        179.648]
+ [ 0,        -0.703125, 0,        340.648]
+ [ 0,         0,        5,       -328.000]]
+
+Test: SEG voxel [208, 418, 16] → CT voxel [208, 418, 16] ✓
+```
+
 ## Alternative: Using highdicom
 
 If you encounter issues with itkwasm-dicom, highdicom is a good alternative:
@@ -240,6 +307,8 @@ vol = seg.get_volume(combine_segments=True)
 meta_tensor = MetaTensor(vol.array)
 meta_tensor.affine = vol.affine
 ```
+
+Note: highdicom may use a different coordinate convention. You may need to apply additional transformations for alignment with ITKReader-loaded CT images.
 
 ## References
 

@@ -1,5 +1,23 @@
 #!/usr/bin/env python
-"""Compare CT (ITKReader) and SEG (ITKWasm) loading to understand the transformation difference."""
+"""Compare CT (via ITKReader) and SEG (via ITKWasm) to understand transformation differences.
+
+This script compares:
+1. CT loaded via MONAI's ITKReader
+2. CT loaded via ITK directly (without MONAI wrapper)
+3. SEG loaded via ITKWasm
+
+Key finding: MONAI's ITKReader applies additional transformation:
+- ITK native: origin [-179.6, -340.6, -328], diagonal [+0.7, +0.7, +5]
+- MONAI ITKReader: origin [+179.6, +340.6, -328], diagonal [-0.7, -0.7, +5]
+
+ITKReader negates X and Y in both the diagonal and origin, which is why
+direct ITKWasm output doesn't align with ITKReader-loaded CT.
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/compare_ct_seg_loading.py
+"""
 
 import os
 import tempfile

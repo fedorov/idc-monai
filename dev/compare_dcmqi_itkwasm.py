@@ -1,5 +1,26 @@
 #!/usr/bin/env python
-"""Compare dcmqi nrrd output with ITKWasm to understand coordinate transformations."""
+"""Compare dcmqi CLI output with ITKWasm to verify they produce identical results.
+
+This script was used to verify that ITKWasm (which wraps dcmqi via WebAssembly)
+produces the same output as the dcmqi CLI tool.
+
+Key finding: ITKWasm and dcmqi produce IDENTICAL output:
+- Same array data
+- Same origin, spacing, direction
+- Same affine matrix
+
+This confirms that any differences between DICOM-SEG and CT loading are due
+to MONAI's ITKReader applying additional transformations, not ITKWasm issues.
+
+Requirements:
+    - dcmqi CLI binaries (download from https://github.com/QIICR/dcmqi/releases)
+    - Set path to dcmqi in the script
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/compare_dcmqi_itkwasm.py
+"""
 
 import os
 import subprocess

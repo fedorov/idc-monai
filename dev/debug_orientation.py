@@ -1,5 +1,18 @@
 #!/usr/bin/env python
-"""Debug script to verify SEG and CT spatial alignment."""
+"""Initial debug script for SEG and CT spatial alignment investigation.
+
+This was the first script used to understand the alignment problem.
+It attempts various transformations (flip X, flip Z) but doesn't fully solve
+the alignment issue. See final_transform_v4.py for the correct solution.
+
+Note: This script contains early investigation code with incomplete solutions.
+Kept for historical reference.
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/debug_orientation.py
+"""
 
 import os
 import tempfile

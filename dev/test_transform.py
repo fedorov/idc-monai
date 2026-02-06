@@ -1,5 +1,20 @@
 #!/usr/bin/env python
-"""Test the updated LoadDicomSegd transform."""
+"""Test the LoadDicomSegd transform.
+
+This script verifies that LoadDicomSegd produces output that is spatially
+aligned with CT images loaded via MONAI's ITKReader.
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/test_transform.py
+
+Expected output:
+    - CT and SEG shapes match
+    - Affines match (within floating point tolerance)
+    - Voxel coordinates map correctly between CT and SEG
+    - Visualization shows anatomically correct overlay
+"""
 
 import os
 import sys

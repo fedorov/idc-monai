@@ -1,5 +1,23 @@
 #!/usr/bin/env python
-"""Check raw DICOM metadata to understand the Y coordinate discrepancy."""
+"""Check raw DICOM metadata to understand orientation differences between CT and SEG.
+
+This script reads the raw DICOM tags using pydicom to examine:
+- ImagePositionPatient (origin)
+- ImageOrientationPatient (direction cosines)
+- PixelSpacing
+- Per-frame metadata in DICOM-SEG
+
+Key finding: CT and SEG often have different ImageOrientationPatient:
+- CT: [1, 0, 0, 0, 1, 0]  -> Y direction = +1
+- SEG: [1, 0, 0, 0, -1, 0] -> Y direction = -1
+
+This means they cover the same physical space but with opposite Y array ordering.
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/check_dicom_metadata.py
+"""
 
 import os
 import tempfile

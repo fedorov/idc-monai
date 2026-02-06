@@ -1,5 +1,27 @@
 #!/usr/bin/env python
-"""Final transform v4: Correct handling of coordinate transformations."""
+"""Standalone implementation of ITKReader-compatible DICOM-SEG loading.
+
+This script demonstrates the transformation logic used in LoadDicomSegd
+without depending on the idc_monai package. Useful for debugging and
+understanding the coordinate transformation.
+
+Key findings:
+1. ITKWasm and dcmqi CLI produce identical output (verified)
+2. MONAI's ITKReader applies additional transformation to CT data
+3. SEG needs Y and Z axis flips plus origin adjustments to match
+
+The transformation:
+1. Transpose ITKWasm array from (Z,Y,X) to (X,Y,Z)
+2. Flip Y axis (if direction[1,1] < 0)
+3. Flip Z axis (if direction[2,2] < 0)
+4. Negate X origin, negate Y origin (after flip adjustment)
+5. Build affine with diagonal [-spacing_x, -spacing_y, +spacing_z]
+
+Usage:
+    cd idc_monai
+    source .venv/bin/activate
+    python dev/final_transform_v4.py
+"""
 
 import os
 import tempfile
