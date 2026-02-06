@@ -204,15 +204,17 @@ class LoadDicomSegd(MapTransform):
     def _build_affine(self, img) -> np.ndarray:
         """Build 4x4 affine matrix from itkwasm Image metadata.
 
-        Note: Assumes array has been transposed from (Z, Y, X) to (X, Y, Z),
-        so spacing/origin/direction are also reordered accordingly.
+        The affine matrix transforms from voxel indices to physical (world)
+        coordinates. ITKWasm provides spacing, origin, and direction cosines
+        that fully describe the spatial mapping.
+
+        Note: ITKWasm uses (i, j, k) indexing where the direction matrix
+        columns correspond to each axis. We build the affine to match the
+        array layout as returned by ITKWasm.
         """
-        # Reverse to match transposed (X, Y, Z) array order
-        spacing = np.array(img.spacing)[::-1]
-        origin = np.array(img.origin)[::-1]
+        spacing = np.array(img.spacing)
+        origin = np.array(img.origin)
         direction = np.array(img.direction).reshape(3, 3)
-        # Reverse both rows and columns for transposed coordinates
-        direction = direction[::-1, ::-1]
 
         affine = np.eye(4)
         affine[:3, :3] = direction @ np.diag(spacing)
@@ -229,12 +231,11 @@ class LoadDicomSegd(MapTransform):
             seg_image, overlay_info = itkwasm_dicom.read_segmentation(dcm_file)
 
             # Convert itkwasm.Image to numpy array
-            # ITKWasm returns (Z, Y, X) but ITKReader returns (X, Y, Z)
-            # Transpose to match ITKReader/MONAI convention
+            # Keep native ITKWasm layout - the affine matrix encodes orientation
+            # Use Orientationd transform to reorient if needed
             seg_array = np.asarray(seg_image.data)
-            seg_array = np.transpose(seg_array, (2, 1, 0))  # (Z, Y, X) -> (X, Y, Z)
 
-            # Extract spatial metadata from itkwasm Image
+            # Build affine from ITKWasm spatial metadata
             affine = self._build_affine(seg_image)
 
             # Create MONAI MetaTensor with metadata
