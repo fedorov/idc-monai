@@ -21,6 +21,7 @@ import sys
 import tempfile
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 
 # Add src to path for development
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -137,8 +138,55 @@ if len(labeled_indices) > 0:
             print(f"  -> CT value: {ct_value:.1f} HU")
 
 print("\n" + "="*60)
-print("Creating visualization")
+print("Creating visualization with DICOM SEG colors")
 print("="*60)
+
+# Extract segment colors from overlay_info metadata
+overlay_info = seg_data["label_meta_dict"].get("overlay_info", {})
+segment_attrs = overlay_info.get("segmentAttributes", [[]])
+
+# Build colormap from DICOM SEG recommendedDisplayRGBValue
+# Index 0 is background (transparent), then each segment label maps to its color
+def build_seg_colormap(segment_attrs):
+    """Build a colormap from DICOM SEG segment attributes.
+
+    The segmentAttributes is a list of lists (groups of segments).
+    Each segment has a labelID and recommendedDisplayRGBValue.
+    """
+    # Flatten segment attributes and find max label
+    all_segments = []
+    for group in segment_attrs:
+        all_segments.extend(group)
+
+    if not all_segments:
+        return plt.cm.nipy_spectral, {}
+
+    max_label = max(seg.get("labelID", 0) for seg in all_segments)
+
+    # Create color array: [background, label1, label2, ...]
+    # Start with transparent background
+    colors = np.zeros((max_label + 1, 4))
+    colors[0] = [0, 0, 0, 0]  # Background transparent
+
+    label_names = {}
+    for seg in all_segments:
+        label_id = seg.get("labelID", 0)
+        rgb = seg.get("recommendedDisplayRGBValue", [128, 128, 128])
+        label_name = seg.get("SegmentLabel", f"Segment {label_id}")
+
+        # Normalize RGB from 0-255 to 0-1, set alpha
+        colors[label_id] = [rgb[0]/255, rgb[1]/255, rgb[2]/255, 1.0]
+        label_names[label_id] = label_name
+
+    return ListedColormap(colors), label_names
+
+seg_cmap, label_names = build_seg_colormap(segment_attrs)
+
+print(f"Found {len(label_names)} segments with DICOM-defined colors:")
+for label_id, name in sorted(label_names.items())[:10]:
+    print(f"  Label {label_id}: {name}")
+if len(label_names) > 10:
+    print(f"  ... and {len(label_names) - 10} more")
 
 ct_shape = ct_image.shape[1:]
 z_slice = ct_shape[2] // 2
@@ -152,15 +200,19 @@ axes[0].imshow(ct_slice.T, cmap='gray', origin='lower', vmin=-1000, vmax=500)
 axes[0].set_title(f'CT slice (z={z_slice})')
 axes[0].axis('off')
 
-axes[1].imshow(seg_slice.T, cmap='nipy_spectral', origin='lower')
-axes[1].set_title(f'SEG slice (z={z_slice})')
+# Use DICOM SEG colors for segmentation display
+axes[1].imshow(seg_slice.T, cmap=seg_cmap, origin='lower',
+               vmin=0, vmax=len(seg_cmap.colors)-1, interpolation='nearest')
+axes[1].set_title(f'SEG slice (z={z_slice})\n(DICOM SEG colors)')
 axes[1].axis('off')
 
+# Overlay with DICOM SEG colors
 axes[2].imshow(ct_slice.T, cmap='gray', origin='lower', vmin=-1000, vmax=500)
 seg_mask = seg_slice > 0
 seg_overlay = np.ma.masked_where(~seg_mask.T, seg_slice.T)
-axes[2].imshow(seg_overlay, cmap='nipy_spectral', origin='lower', alpha=0.5)
-axes[2].set_title('Overlay')
+axes[2].imshow(seg_overlay, cmap=seg_cmap, origin='lower', alpha=0.6,
+               vmin=0, vmax=len(seg_cmap.colors)-1, interpolation='nearest')
+axes[2].set_title('Overlay\n(DICOM SEG colors)')
 axes[2].axis('off')
 
 plt.tight_layout()
