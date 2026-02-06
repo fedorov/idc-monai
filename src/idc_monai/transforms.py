@@ -202,10 +202,17 @@ class LoadDicomSegd(MapTransform):
         return dcm_files[0]
 
     def _build_affine(self, img) -> np.ndarray:
-        """Build 4x4 affine matrix from itkwasm Image metadata."""
-        spacing = np.array(img.spacing)
-        origin = np.array(img.origin)
+        """Build 4x4 affine matrix from itkwasm Image metadata.
+
+        Note: Assumes array has been transposed from (Z, Y, X) to (X, Y, Z),
+        so spacing/origin/direction are also reordered accordingly.
+        """
+        # Reverse to match transposed (X, Y, Z) array order
+        spacing = np.array(img.spacing)[::-1]
+        origin = np.array(img.origin)[::-1]
         direction = np.array(img.direction).reshape(3, 3)
+        # Reverse both rows and columns for transposed coordinates
+        direction = direction[::-1, ::-1]
 
         affine = np.eye(4)
         affine[:3, :3] = direction @ np.diag(spacing)
@@ -222,7 +229,10 @@ class LoadDicomSegd(MapTransform):
             seg_image, overlay_info = itkwasm_dicom.read_segmentation(dcm_file)
 
             # Convert itkwasm.Image to numpy array
+            # ITKWasm returns (Z, Y, X) but ITKReader returns (X, Y, Z)
+            # Transpose to match ITKReader/MONAI convention
             seg_array = np.asarray(seg_image.data)
+            seg_array = np.transpose(seg_array, (2, 1, 0))  # (Z, Y, X) -> (X, Y, Z)
 
             # Extract spatial metadata from itkwasm Image
             affine = self._build_affine(seg_image)
