@@ -36,6 +36,7 @@ dependencies = [
     "itkwasm-dicom>=7.6.4",
     "itk>=5.4.5",
     "nibabel>=5.2.1",
+    "matplotlib>=3.7.5",
 ]
 
 [project.optional-dependencies]

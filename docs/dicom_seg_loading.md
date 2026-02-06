@@ -176,15 +176,39 @@ transforms = Compose([
 
 1. **Directory handling**: Accepts either a directory path (finds `.dcm` file inside) or direct file path
 2. **Array transposition**: ITKWasm returns arrays in (Z, Y, X) order but metadata in (X, Y, Z) order. We transpose to (X, Y, Z) to match ITKReader and MONAI conventions.
-3. **Affine construction**: Builds proper 4x4 affine matrix from ITKWasm Image metadata (spacing, origin, direction cosines)
-4. **MetaTensor output**: Returns MONAI `MetaTensor` with affine and metadata attached
-5. **Overlay info**: Preserves segment labels/descriptions in metadata
+3. **ITKReader-compatible affine**: Builds proper 4x4 affine matrix that matches MONAI's ITKReader output format, ensuring spatial alignment between CT and SEG
+4. **Automatic axis flipping**: Flips array axes as needed to match the coordinate transformation applied by ITKReader
+5. **MetaTensor output**: Returns MONAI `MetaTensor` with affine and metadata attached
+6. **Overlay info**: Preserves segment labels/descriptions in metadata
 
-### Important: Orientation Handling
+### Coordinate System Alignment
 
-The CT image and DICOM-SEG may have different orientations (e.g., CT in LPS, SEG in RPI). This is normal - they represent the same physical space but with different array orderings.
+DICOM images are stored in LPS (Left-Posterior-Superior) coordinates, but MONAI's ITKReader applies a transformation that results in:
+- Affine diagonal: `[-spacing_x, -spacing_y, +spacing_z]`
+- Origin adjusted to match the transformed array
 
-**Always use `Orientationd` to reorient both to a common orientation before processing:**
+The `LoadDicomSegd` transform applies the same transformation to DICOM-SEG data, ensuring that:
+- CT and SEG voxel coordinates map to the same world coordinates
+- Overlay visualizations align correctly
+- Spatial operations (resampling, registration) work as expected
+
+### Usage Note
+
+Since `LoadDicomSegd` produces affines compatible with ITKReader, you typically do NOT need `Orientationd` for basic alignment. Both CT (via ITKReader) and SEG (via LoadDicomSegd) will have matching affines:
+
+```python
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd
+from idc_monai.transforms import LoadDicomSegd
+
+transforms = Compose([
+    LoadImaged(keys=["image"]),  # Uses ITKReader by default
+    LoadDicomSegd(keys=["label"]),
+    EnsureChannelFirstd(keys=["image", "label"]),
+    # CT and SEG are now aligned - same affine, same voxel grid
+])
+```
+
+If you need a specific orientation (e.g., RAS for neuroimaging), add `Orientationd`:
 
 ```python
 from monai.transforms import Compose, LoadImaged, Orientationd, EnsureChannelFirstd

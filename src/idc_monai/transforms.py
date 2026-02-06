@@ -201,21 +201,62 @@ class LoadDicomSegd(MapTransform):
             raise FileNotFoundError(f"No .dcm files found in {path}")
         return dcm_files[0]
 
-    def _build_affine(self, spacing, origin, direction) -> np.ndarray:
-        """Build 4x4 affine matrix from spatial metadata.
+    def _build_affine(self, spacing, origin, direction, size) -> tuple[np.ndarray, list[int]]:
+        """Build 4x4 affine matrix compatible with ITKReader/MONAI conventions.
+
+        MONAI's ITKReader applies a coordinate transformation that results in:
+        - Affine diagonal: [-spacing_x, -spacing_y, +spacing_z]
+        - Origin adjusted to match the transformed array
+
+        This method computes the equivalent transformation for DICOM-SEG data
+        loaded via ITKWasm, ensuring spatial alignment with CT images loaded
+        via ITKReader.
 
         Args:
-            spacing: Voxel spacing in each dimension
-            origin: Physical coordinates of the first voxel
+            spacing: Voxel spacing in each dimension (X, Y, Z)
+            origin: Physical coordinates of the first voxel [0,0,0] in LPS
             direction: 3x3 direction cosine matrix
+            size: Volume dimensions (X, Y, Z)
 
         Returns:
-            4x4 affine transformation matrix
+            Tuple of (4x4 affine matrix, list of axes to flip)
         """
+        # ITKReader produces affines with [-spacing_x, -spacing_y, +spacing_z]
+        # This is effectively a coordinate system transformation from LPS to
+        # a convention where X and Y are negated.
+        #
+        # For DICOM-SEG with direction [dir_x, dir_y, dir_z]:
+        # - Flip Y if dir_y is negative (to match CT Y convention)
+        # - Flip Z if dir_z is negative (to get positive Z spacing)
+        # - X remains as-is but origin X is negated
+
+        flip_axes = []
+        new_origin = origin.copy()
+
+        # Y axis: flip if direction is negative
+        if direction[1, 1] < 0:
+            flip_axes.append(1)
+            # After flip, compute new origin Y (at the far corner, then negate for RAS-like)
+            new_origin[1] = origin[1] + (size[1] - 1) * spacing[1] * direction[1, 1]
+
+        # Negate Y for RAS-like convention (ITKReader does this)
+        new_origin[1] = -new_origin[1]
+
+        # Z axis: flip if direction is negative (to get positive Z)
+        if direction[2, 2] < 0:
+            flip_axes.append(2)
+            # After flip, origin Z moves to the far corner
+            new_origin[2] = origin[2] + (size[2] - 1) * spacing[2] * direction[2, 2]
+
+        # X axis: negate origin for RAS-like convention
+        new_origin[0] = -origin[0]
+
+        # Build affine with ITKReader-like diagonal
         affine = np.eye(4)
-        affine[:3, :3] = direction @ np.diag(spacing)
-        affine[:3, 3] = origin
-        return affine
+        affine[:3, :3] = np.diag([-spacing[0], -spacing[1], spacing[2]])
+        affine[:3, 3] = new_origin
+
+        return affine, flip_axes
 
     def __call__(self, data: Mapping[Hashable, any]) -> dict[Hashable, any]:
         d = dict(data)
@@ -228,14 +269,23 @@ class LoadDicomSegd(MapTransform):
 
             # ITKWasm returns array in (Z, Y, X) order but metadata in (X, Y, Z) order
             # Transpose array to (X, Y, Z) to match metadata and ITKReader convention
-            seg_array = np.asarray(seg_image.data)
+            seg_array = np.asarray(seg_image.data).copy()  # Make writable copy
             seg_array = np.transpose(seg_array, (2, 1, 0))  # (Z, Y, X) -> (X, Y, Z)
 
             # Build affine from ITKWasm spatial metadata (already in X, Y, Z order)
             spacing = np.array(seg_image.spacing)
             origin = np.array(seg_image.origin)
             direction = np.array(seg_image.direction).reshape(3, 3)
-            affine = self._build_affine(spacing, origin, direction)
+            size = np.array(seg_image.size)
+
+            affine, flip_axes = self._build_affine(spacing, origin, direction, size)
+
+            # Flip array axes as determined by _build_affine
+            for axis in flip_axes:
+                seg_array = np.flip(seg_array, axis=axis)
+
+            # Make contiguous copy (required because np.flip creates views with negative strides)
+            seg_array = np.ascontiguousarray(seg_array)
 
             # Create MONAI MetaTensor with metadata
             meta_tensor = MetaTensor(seg_array)
@@ -244,6 +294,8 @@ class LoadDicomSegd(MapTransform):
             meta_tensor.meta["overlay_info"] = overlay_info
             meta_tensor.meta["spacing"] = tuple(seg_image.spacing)
             meta_tensor.meta["origin"] = tuple(seg_image.origin)
+            # Required for EnsureChannelFirstd - indicate no channel dim in loaded data
+            meta_tensor.meta["original_channel_dim"] = "no_channel"
 
             d[key] = meta_tensor
             d[f"{key}_meta_dict"] = dict(meta_tensor.meta)
