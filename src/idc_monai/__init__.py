@@ -28,6 +28,7 @@ from idc_monai.transforms import (
     CTWindowd,
     CT_WINDOWS,
     get_ct_window_transform,
+    LoadDicomSegd,
 )
 
 __version__ = "0.1.0"
@@ -50,4 +51,5 @@ __all__ = [
     "CTWindowd",
     "CT_WINDOWS",
     "get_ct_window_transform",
+    "LoadDicomSegd",
 ]

@@ -47,6 +47,7 @@ tutorials = [
     "matplotlib>=3.4.0",
     "jupyterlab",
     "SimpleITK>=2.1.0",
+    "itkwasm-dicom>=7.6.0",  # For DICOM-SEG loading
 ]
 
 [project.urls]

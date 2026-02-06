@@ -14,17 +14,24 @@ IDC-specific transforms for MONAI pipelines.
 
 Provides transforms commonly needed when working with IDC DICOM data.
 
-Note: MONAI's LoadImaged with ITKReader handles DICOM series directly -
-no format conversion is needed. These transforms provide additional
-preprocessing utilities specific to IDC data workflows.
+Note: MONAI's LoadImaged with ITKReader handles regular DICOM series directly.
+However, DICOM Segmentation (DICOM-SEG) files require special handling - use
+LoadDicomSegd which uses itkwasm-dicom for robust DICOM-SEG reading.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Hashable, Mapping
+
+import numpy as np
 
 from monai.config import KeysCollection
 from monai.transforms import MapTransform
+from monai.data import MetaTensor
+from monai.utils import optional_import
+
+itkwasm_dicom, has_itkwasm = optional_import("itkwasm_dicom")
 
 
 class CTWindowd(MapTransform):
@@ -142,3 +149,93 @@ def get_ct_window_transform(
         output_min=output_min,
         output_max=output_max,
     )
+
+
+class LoadDicomSegd(MapTransform):
+    """
+    Load DICOM Segmentation (DICOM-SEG) files using ITKWasm.
+
+    DICOM-SEG is an enhanced multiframe DICOM format that stores segmentation
+    masks. Unlike regular DICOM series (one file per slice), DICOM-SEG stores
+    all slices in a single file with segment metadata.
+
+    This transform uses itkwasm-dicom which wraps dcmqi for robust DICOM-SEG
+    reading with proper spatial metadata extraction.
+
+    Args:
+        keys: Keys of the DICOM-SEG paths to load.
+        allow_missing_keys: Don't raise exception if key is missing.
+
+    Note:
+        - Input: path to directory containing a single SEG .dcm file,
+          or direct path to the .dcm file
+        - Output: MetaTensor with shape matching the segmentation volume
+        - Spatial metadata (affine) is extracted from the DICOM-SEG
+
+    Example:
+        >>> from idc_monai.transforms import LoadDicomSegd
+        >>> transform = LoadDicomSegd(keys=["label"])
+        >>> data = {"label": "/path/to/seg_series_dir"}
+        >>> result = transform(data)
+        >>> print(result["label"].shape)
+    """
+
+    def __init__(
+        self,
+        keys: KeysCollection,
+        allow_missing_keys: bool = False,
+    ) -> None:
+        super().__init__(keys, allow_missing_keys)
+        if not has_itkwasm:
+            raise ImportError(
+                "itkwasm-dicom is required for LoadDicomSegd. "
+                "Install it with: pip install itkwasm-dicom"
+            )
+
+    def _find_dcm_file(self, path: Path) -> Path:
+        """Find .dcm file in directory or return path if already a file."""
+        if path.is_file():
+            return path
+        dcm_files = list(path.glob("*.dcm"))
+        if not dcm_files:
+            raise FileNotFoundError(f"No .dcm files found in {path}")
+        return dcm_files[0]
+
+    def _build_affine(self, img) -> np.ndarray:
+        """Build 4x4 affine matrix from itkwasm Image metadata."""
+        spacing = np.array(img.spacing)
+        origin = np.array(img.origin)
+        direction = np.array(img.direction).reshape(3, 3)
+
+        affine = np.eye(4)
+        affine[:3, :3] = direction @ np.diag(spacing)
+        affine[:3, 3] = origin
+        return affine
+
+    def __call__(self, data: Mapping[Hashable, any]) -> dict[Hashable, any]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            path = Path(d[key])
+            dcm_file = self._find_dcm_file(path)
+
+            # Read using ITKWasm
+            seg_image, overlay_info = itkwasm_dicom.read_segmentation(dcm_file)
+
+            # Convert itkwasm.Image to numpy array
+            seg_array = np.asarray(seg_image.data)
+
+            # Extract spatial metadata from itkwasm Image
+            affine = self._build_affine(seg_image)
+
+            # Create MONAI MetaTensor with metadata
+            meta_tensor = MetaTensor(seg_array)
+            meta_tensor.affine = affine
+            meta_tensor.meta["filename_or_obj"] = str(dcm_file)
+            meta_tensor.meta["overlay_info"] = overlay_info
+            meta_tensor.meta["spacing"] = tuple(seg_image.spacing)
+            meta_tensor.meta["origin"] = tuple(seg_image.origin)
+
+            d[key] = meta_tensor
+            d[f"{key}_meta_dict"] = dict(meta_tensor.meta)
+
+        return d
