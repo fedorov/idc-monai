@@ -1,17 +1,20 @@
 # IDC-MONAI: Using Imaging Data Commons with MONAI
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ImagingDataCommons/idc-monai/blob/main/idc_monai/monai_contribution/idc_dataset.ipynb)
+
 A comprehensive guide and toolkit for using [NCI Imaging Data Commons (IDC)](https://portal.imaging.datacommons.cancer.gov/) data with [MONAI](https://monai.io/) for medical imaging AI research.
 
 ## Overview
 
-This project helps MONAI users leverage the vast public cancer imaging datasets available through the Imaging Data Commons. IDC provides free access to over 50TB of radiology and pathology images without authentication, making it an excellent resource for training and evaluating medical imaging AI models.
+This project helps MONAI users leverage the vast public cancer imaging datasets available through the Imaging Data Commons. IDC provides free access to ~100 TB of radiology and pathology images without authentication, making it an excellent resource for training and evaluating medical imaging AI models.
 
 ### What You'll Learn
 
 - Query and discover relevant imaging data from IDC
 - Download DICOM data efficiently for AI training
 - Load IDC data into MONAI pipelines with proper preprocessing
-- Work with IDC annotations and segmentations
+- Load DICOM Segmentation (DICOM-SEG) files with proper spatial alignment
+- Extract segment metadata (names, categories, colors) from DICOM SEG
 - Build end-to-end training workflows using public cancer imaging data
 
 ## Project Structure
@@ -25,15 +28,16 @@ idc_monai/
 │   └── idc_monai/
 │       ├── __init__.py
 │       ├── dataset.py        # IDCDataset class for MONAI
-│       ├── transforms.py     # IDC-specific transforms
+│       ├── transforms.py     # IDC-specific transforms (LoadDicomSegd, CTWindowd)
 │       └── utils.py          # Utility functions
 ├── tutorials/
 │   ├── 01_getting_started.ipynb      # Introduction to IDC + MONAI
 │   ├── 02_ct_segmentation.ipynb      # CT segmentation workflow
 │   └── 03_working_with_annotations.ipynb  # Using IDC annotations
-└── examples/
-    ├── lung_ct_classification.py     # Lung nodule classification
-    └── organ_segmentation.py         # Multi-organ segmentation
+├── monai_contribution/
+│   └── idc_dataset.ipynb     # Self-contained notebook for MONAI tutorials
+└── dev/
+    └── test_transform.py     # Development/testing scripts
 ```
 
 ## Learning Path
@@ -44,7 +48,9 @@ idc_monai/
 
 ### Intermediate Track
 3. **[Working with Annotations](tutorials/03_working_with_annotations.ipynb)** - Use AI-generated and expert annotations from IDC
-4. **[Examples](examples/)** - Production-ready scripts for common tasks
+
+### Self-Contained Tutorial
+- **[IDC Dataset Notebook](monai_contribution/idc_dataset.ipynb)** - Complete standalone tutorial (opens in Colab)
 
 ## Quick Start
 
@@ -108,18 +114,28 @@ A MONAI-compatible dataset class that handles:
 - Integration with MONAI's transform pipeline
 - Support for images with paired segmentations
 
-### Pre-built Transform Pipelines
+### LoadDicomSegd Transform
 
-Common preprocessing pipelines for:
-- CT imaging (lung, liver, etc.)
-- MRI brain imaging
-- PET/CT fusion studies
+A specialized MONAI transform for loading DICOM Segmentation files:
+- Uses `itkwasm-dicom` for robust DICOM-SEG reading
+- Produces affines compatible with MONAI's ITKReader (spatial alignment with CT)
+- Extracts segment metadata including:
+  - Segment names and labels
+  - Category/type codes (SNOMED-CT, etc.)
+  - Recommended display colors (`recommendedDisplayRGBValue`)
+- Enables direct overlay visualization without manual reorientation
+
+### CTWindowd Transform
+
+Apply CT windowing with preset windows:
+- Lung, soft tissue, bone, brain, liver presets
+- Custom window center/width support
 
 ### Data Discovery Utilities
 
 Helper functions to find:
 - Collections by cancer type, modality, or body part
-- Paired image-segmentation data
+- Paired image-segmentation data via `seg_index`
 - Data with specific licenses (CC-BY for commercial use)
 
 ## IDC Data Highlights for MONAI Users
@@ -139,12 +155,13 @@ Helper functions to find:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+
 - MONAI 1.0+
 - idc-index 0.8+
 - PyTorch 1.9+
+- itkwasm-dicom (for DICOM-SEG support)
 - pydicom
-- SimpleITK
+- ITK
 
 ## License
 
@@ -185,3 +202,5 @@ Also cite IDC:
 - [MONAI Documentation](https://docs.monai.io/)
 - [MONAI Tutorials](https://github.com/Project-MONAI/tutorials)
 - [IDC User Forum](https://discourse.canceridc.dev/)
+- [DICOM SEG Standard](https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.8.20.html)
+- [ITKWasm DICOM](https://wasm.itk.org/en/latest/introduction/file_formats/dicom.html)
