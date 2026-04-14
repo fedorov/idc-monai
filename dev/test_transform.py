@@ -10,15 +10,14 @@ Usage:
     python dev/test_transform.py
 
 Expected output:
-    - CT and SEG shapes match
-    - Affines match (within floating point tolerance)
-    - Voxel coordinates map correctly between CT and SEG
+    - CT and SEG shapes are reported
+    - Affines are printed (may differ when CT and SEG have different direction matrices)
+    - Voxel coordinates map correctly between CT and SEG via round-trip world coordinate test
     - Visualization shows anatomically correct overlay
 """
 
 import os
 import sys
-import tempfile
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -26,45 +25,26 @@ from matplotlib.colors import ListedColormap
 # Add src to path for development
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from idc_index import IDCClient
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, Orientationd
 from monai.data.image_reader import ITKReader
 
 from idc_monai.transforms import LoadDicomSegd
 
-# Download test data
-print("="*60)
-print("Downloading test data")
-print("="*60)
-
-client = IDCClient()
-client.fetch_index("seg_index")
-
-paired = client.sql_query("""
-    SELECT src.SeriesInstanceUID as image_uid,
-           seg.SeriesInstanceUID as seg_uid,
-           src.collection_id
-    FROM seg_index seg
-    JOIN index src ON seg.segmented_SeriesInstanceUID = src.SeriesInstanceUID
-    WHERE src.Modality = 'CT'
-      AND seg.AlgorithmName LIKE '%TotalSegmentator%'
-    ORDER BY src.series_size_MB ASC
-    LIMIT 1
-""")
-
-demo_pair = paired.iloc[0]
-print(f"Using: {demo_pair['collection_id']}")
-
-seg_dir = tempfile.mkdtemp(prefix="idc_test_transform_")
-print(f"Downloading to {seg_dir}...")
-client.download_from_selection(
-    seriesInstanceUID=[demo_pair['image_uid'], demo_pair['seg_uid']],
-    downloadDir=seg_dir,
-    dirTemplate="%SeriesInstanceUID"
+# Use pre-existing sample data from the workspace
+WORKSPACE = os.path.join(os.path.dirname(__file__), '..')
+SERIES_DIR = os.path.join(
+    WORKSPACE,
+    "nlst/100009/1.2.840.113654.2.55.192012426995727721871016249335309434385"
 )
 
-image_path = os.path.join(seg_dir, demo_pair['image_uid'])
-seg_path = os.path.join(seg_dir, demo_pair['seg_uid'])
+image_path = os.path.join(SERIES_DIR, "CT_1.2.840.113654.2.55.305538394446738410906709753576946604022")
+seg_path = os.path.join(SERIES_DIR, "SEG_1.2.276.0.7230010.3.1.3.313263360.15787.1706310178.804490")
+
+print("="*60)
+print("Using local sample data")
+print("="*60)
+print(f"CT:  {image_path}")
+print(f"SEG: {seg_path}")
 
 print("\n" + "="*60)
 print("Loading data using transforms")
@@ -93,6 +73,8 @@ print(f"CT affine:\n{ct_image.affine}")
 
 print(f"\nSEG shape: {seg_label.shape}")
 print(f"SEG affine:\n{seg_label.affine}")
+print("\nNote: CT and SEG affines differ when their direction matrices differ.")
+print("Alignment is verified via voxel-to-world coordinate round-trips below.")
 
 print("\n" + "="*60)
 print("Testing alignment")
@@ -188,22 +170,36 @@ for label_id, name in sorted(label_names.items())[:10]:
 if len(label_names) > 10:
     print(f"  ... and {len(label_names) - 10} more")
 
-ct_shape = ct_image.shape[1:]
-z_slice = ct_shape[2] // 2
+# Normalize both to RAS before visualization — CT and SEG may have different
+# direction matrices, so the same voxel index does not map to the same world
+# position without reorientation.
+print("Reorienting CT and SEG to RAS for visualization...")
+ct_ras = Orientationd(keys=["image"], axcodes="RAS")(ct_data)["image"]
+seg_ras = Orientationd(keys=["label"], axcodes="RAS")(seg_data)["label"]
+seg_np_ras = seg_ras[0].numpy()
 
-ct_slice = ct_image[0, :, :, z_slice].numpy()
-seg_slice = seg_np[:, :, z_slice]
+ct_affine_ras = ct_ras.affine.numpy()
+seg_affine_ras = seg_ras.affine.numpy()
+
+# Find the CT z-slice that aligns with the SEG volume's midpoint in world space
+seg_mid_z = seg_np_ras.shape[2] // 2
+seg_mid_world = voxel_to_world(seg_affine_ras, [0, 0, seg_mid_z])
+ct_mid_voxel = world_to_voxel(ct_affine_ras, seg_mid_world)
+z_slice = int(np.clip(np.round(ct_mid_voxel[2]), 0, ct_ras.shape[3] - 1))
+
+ct_slice = ct_ras[0, :, :, z_slice].numpy()
+seg_slice = seg_np_ras[:, :, seg_mid_z]
 
 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
 axes[0].imshow(ct_slice.T, cmap='gray', origin='lower', vmin=-1000, vmax=500)
-axes[0].set_title(f'CT slice (z={z_slice})')
+axes[0].set_title(f'CT slice (z={z_slice}, RAS)')
 axes[0].axis('off')
 
 # Use DICOM SEG colors for segmentation display
 axes[1].imshow(seg_slice.T, cmap=seg_cmap, origin='lower',
                vmin=0, vmax=len(seg_cmap.colors)-1, interpolation='nearest')
-axes[1].set_title(f'SEG slice (z={z_slice})\n(DICOM SEG colors)')
+axes[1].set_title(f'SEG slice (z={seg_mid_z}, RAS)\n(DICOM SEG colors)')
 axes[1].axis('off')
 
 # Overlay with DICOM SEG colors
@@ -212,15 +208,15 @@ seg_mask = seg_slice > 0
 seg_overlay = np.ma.masked_where(~seg_mask.T, seg_slice.T)
 axes[2].imshow(seg_overlay, cmap=seg_cmap, origin='lower', alpha=0.6,
                vmin=0, vmax=len(seg_cmap.colors)-1, interpolation='nearest')
-axes[2].set_title('Overlay\n(DICOM SEG colors)')
+axes[2].set_title('Overlay (RAS)\n(DICOM SEG colors)')
 axes[2].axis('off')
 
 plt.tight_layout()
-output_path = os.path.join(seg_dir, 'transform_test.png')
+output_path = os.path.join(SERIES_DIR, 'transform_test.png')
 plt.savefig(output_path, dpi=150)
 print(f"Saved: {output_path}")
 
 print("\n" + "="*60)
 print("SUCCESS! Transform is working correctly.")
 print("="*60)
-print(f"\nData directory: {seg_dir}")
+print(f"\nData directory: {SERIES_DIR}")
