@@ -1,3 +1,5 @@
+# 🚧 **WARNING: This repository is work in progress and is not yet ready for general use!** 🚧 
+
 # IDC-MONAI: Using Imaging Data Commons with MONAI
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ImagingDataCommons/idc-monai/blob/main/idc_monai/monai_contribution/idc_dataset.ipynb)
